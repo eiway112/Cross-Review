@@ -1,0 +1,2 @@
+# 纯 Markdown + Python 源码，统一 LF 入库，避免跨平台 checkout 造成整仓行尾改写
+* text=auto eol=lf

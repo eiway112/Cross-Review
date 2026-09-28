@@ -13,7 +13,7 @@
 
 - **单一入口**：不需要记术语，按"你手里现在有什么"自动路由
 - **零门槛**：模板里只有两类内容——原样照抄的、`{花括号}` 里填空的
-- **零硬编码**：不含任何固定路径、平台绑定或环境依赖，任何支持 SKILL.md 的智能体宿主均可使用
+- **零硬编码**：核心流程（SKILL.md）不含任何本机路径、平台绑定或环境依赖，任何支持 SKILL.md 的智能体宿主均可使用；附带的 `scripts/dispatch_review.py` 是纯 Python 标准库实现、默认入口指向阿里云百炼（DashScope），用 `--base-url` / `--api-key-env` 可指向任意 OpenAI 兼容端点——**不用它也能跑完整流程**（走手动分发或本地评审员）
 
 ## 三条铁律（流程内置）
 
@@ -23,11 +23,14 @@
 
 ## 安装
 
-把 `cross-review/` 目录整个放入你的智能体技能目录（通常是 `~/.<agent>/skills/` 或项目的 `.*/skills/`），宿主会自动按 `SKILL.md` 的 description 匹配触发。
+把 `cross-review/` 目录整个放入你的智能体技能目录（通常是 `~/.<agent>/skills/` 或项目的 `.*/skills/`），宿主会自动按 `SKILL.md` 的 description 匹配触发。装完即可用，**不需要任何 API Key**。
+
+想用"一次自动发给多家模型"（SKILL.md 里的路径一）时，才需要自备一个 OpenAI 兼容端点的 API Key 并额外安装 Python 3（脚本只用标准库）。
 
 ## 文件构成
 
 - `SKILL.md` — 技能本体（触发描述 + 完整工作流 + 全部模板）
+- `scripts/dispatch_review.py` — 可选：一次把任务卡发给多个不同家族的模型（需自备 API Key，零第三方依赖）
 - `LICENSE` — MIT
 
 ## 许可
