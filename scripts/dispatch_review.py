@@ -4,13 +4,13 @@
 
 用法：
   python dispatch_review.py --task-file 任务卡.md \
-      --models "qwen3.5-plus,deepseek-v4.1-flash,kimi-k2.6" \
+      --models "qwen3.5-plus,deepseek-v4.1-plus,kimi-k2.6" \
       --out-dir 回收目录
 
 前提：一个 OpenAI 兼容端点的 API Key，按以下顺序取：
-  1) 环境变量（名由 --api-key-env 指定，默认 DASHSCOPE_API_KEY）
+  1) 环境变量（名由 --api-key-env 指定，默认 DASHSCOPE_API_KEY）——显式设置者优先
   2) ~/.aliyun/config.json 当前 profile 的 dashscope.api_key（阿里云百炼场景，标准 sk- 开头；
-     Coding Plan 的 sk-sp- 不支持）
+     Coding Plan 的 sk-sp- 不支持；仅当端点为 DashScope 时读取，防止换端点后把百炼密钥发给别家）
   注意：按量计费，每次分发前须取得用户本轮授权。
 
 可选参数：
@@ -42,8 +42,19 @@ DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_API_KEY_ENV = "DASHSCOPE_API_KEY"
 
 
-def resolve_api_key(env_name=DEFAULT_API_KEY_ENV):
-    """按优先级取密钥：aliyun CLI 配置 -> 环境变量（名由 --api-key-env 指定）。只返回值，不打印。"""
+def resolve_api_key(env_name, base_url):
+    """按优先级取密钥：环境变量（--api-key-env 指定，显式设置者优先）-> ~/.aliyun/config.json
+    （百炼专用凭证，仅当端点为 DashScope 时读取，避免换端点后把百炼密钥发给别家）。
+    只返回值，不打印。"""
+    k = os.environ.get(env_name)
+    if k:
+        return k, f"env {env_name}"
+    if "dashscope" not in base_url.lower():
+        sys.exit(
+            f"[dispatch] 找不到 API Key。当前端点 {base_url} 不是 DashScope，"
+            f"不会读取 ~/.aliyun/config.json（防跨厂商错配密钥）。\n"
+            f"请配置环境变量 {env_name}（名字可用 --api-key-env 改）后重试。"
+        )
     cfg = Path.home() / ".aliyun" / "config.json"
     if cfg.exists():
         try:
@@ -56,13 +67,10 @@ def resolve_api_key(env_name=DEFAULT_API_KEY_ENV):
                         return k, f"~/.aliyun/config.json (profile: {current})"
         except Exception:
             pass
-    k = os.environ.get(env_name)
-    if k:
-        return k, f"env {env_name}"
     sys.exit(
         f"[dispatch] 找不到 API Key。请配置以下任一项：\n"
-        f"  1) 环境变量 {env_name}（不想用这个名字就用 --api-key-env 改）\n"
-        "  2) ~/.aliyun/config.json 当前 profile 的 dashscope.api_key（阿里云百炼）\n"
+        f"  1) 环境变量 {env_name}（不想用这个名字就用 --api-key-env 改；两者都有时环境变量优先）\n"
+        "  2) ~/.aliyun/config.json 当前 profile 的 dashscope.api_key（阿里云百炼，仅 DashScope 端点时读取）\n"
         f"默认端点 {DEFAULT_BASE_URL}；换 OpenAI 兼容的其他厂商用 --base-url。"
     )
 
@@ -128,7 +136,7 @@ def list_models(base_url, key, timeout):
 def main():
     ap = argparse.ArgumentParser(description="cross-review 多模型评审分发器")
     ap.add_argument("--task-file", help="A1 任务卡路径（全文原样发给每一家；--list-models 模式下不需要）")
-    ap.add_argument("--models", help="逗号分隔的模型名，须跨家族（如 qwen3.5-plus,deepseek-v4.1-flash,kimi-k2.6）")
+    ap.add_argument("--models", help="逗号分隔的模型名，须跨家族（如 qwen3.5-plus,deepseek-v4.1-plus,kimi-k2.6）")
     ap.add_argument("--out-dir", help="回收目录（每家一个 .md，已存在则覆盖同名）")
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"API 入口，默认 {DEFAULT_BASE_URL}")
     ap.add_argument("--api-key-env", default=DEFAULT_API_KEY_ENV,
@@ -140,7 +148,7 @@ def main():
                     help="只列出当前密钥可用的模型后退出（诊断用，不发生成费用）")
     args = ap.parse_args()
 
-    key, key_source = resolve_api_key(args.api_key_env)
+    key, key_source = resolve_api_key(args.api_key_env, args.base_url)
     print(f"[dispatch] 密钥来源: {key_source}")
 
     if args.list_models:
@@ -157,7 +165,10 @@ def main():
     task_path = Path(args.task_file)
     if not task_path.exists():
         sys.exit(f"[dispatch] 任务卡不存在: {task_path}")
-    task_text = task_path.read_text(encoding="utf-8")
+    task_text = task_path.read_text(encoding="utf-8", errors="replace")
+    if "\ufffd" in task_text:
+        sys.exit(f"[dispatch] 任务卡 {task_path} 含无法按 UTF-8 解码的字符（可能用 GBK/ANSI 保存）——"
+                 "请用 UTF-8 重新保存后再发，避免把损坏内容发给各家")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -165,6 +176,11 @@ def main():
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if len(models) < 2:
         print("[dispatch] 警告：只发了 1 家，交叉验证需要 >=2 家不同家族", file=sys.stderr)
+    fams = [m.split("-")[0].lower() for m in models]
+    if len(models) >= 2 and len(set(fams)) < len(fams):
+        dup = sorted({f for f in fams if fams.count(f) > 1})
+        print(f"[dispatch] 警告：{', '.join(dup)} 家族重复，同家族只算一家源，"
+              "结论需按 1 家权重处理（见 SKILL.md 选型规则）", file=sys.stderr)
 
     results = []
     for m in models:
@@ -195,7 +211,7 @@ def main():
             f"model: {m}\n"
             f"base_url: {args.base_url}\n"
             f"task_file: {task_path}\n"
-            f"dispatched_at: {datetime.datetime.now().isoformat(timespec='seconds')}\n"
+            f"dispatched_at: {datetime.datetime.now().astimezone().isoformat(timespec='seconds')}\n"
             f"elapsed_s: {elapsed:.1f}\n"
             f"usage: {json.dumps(usage, ensure_ascii=False)}\n"
             f"finish_reason: {choice.get('finish_reason')}\n"
